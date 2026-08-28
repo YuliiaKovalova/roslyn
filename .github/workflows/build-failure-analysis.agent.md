@@ -44,6 +44,10 @@ on:
         description: "Azure DevOps build id to analyze (dnceng-public/public)."
         required: true
         type: string
+      ado-pr-number:
+        description: "E2E ONLY: source dotnet/roslyn PR number recorded by the Azure build."
+        required: true
+        type: string
       pr-number:
         description: "PR number to post the analysis on."
         required: true
@@ -66,9 +70,13 @@ if: needs.fetch-binlog.outputs.binlog-found == 'true'
 # `secrets.COPILOT_GITHUB_TOKEN` to `github.token`, which is not entitled for
 # inference against api.githubcopilot.com in this org, and every run then fails
 # with HTTP 403 before it reads the prompt.
+# E2E ONLY: `copilot-requests: write` is added here because the fork has no
+# `COPILOT_GITHUB_TOKEN` secret, so inference must go through `github.token`.
+# Upstream this must be REMOVED — see the comment above.
 permissions:
   contents: read
   pull-requests: read
+  copilot-requests: write
 
 concurrency:
   # Real `roslyn-CI` failures and manual dispatches share a PR-scoped group so a
@@ -160,6 +168,9 @@ jobs:
           CHECK_HEAD_SHA: ${{ github.event.check_run.head_sha }}
           CHECK_DETAILS_URL: ${{ github.event.check_run.details_url }}
           DISPATCH_BUILD_ID: ${{ inputs['ado-build-id'] }}
+          # E2E ONLY: does not exist upstream, where the fork mirror PR and the
+          # PR the Azure build ran on are the same PR.
+          ADO_PR_NUMBER: ${{ inputs['ado-pr-number'] }}
           BINLOG_DIR: /tmp/binlogs
           SCRIPT_DIR: ${{ github.workspace }}/.github/workflows/scripts
         # `dotnet run` evaluates the fetcher as an MSBuild project, so it picks

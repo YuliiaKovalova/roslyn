@@ -86,13 +86,26 @@ if (prNumber.Length == 0 && Regex.IsMatch(checkHeadSha, "^[0-9a-f]{40}$"))
 // Interpolated into API paths and into the `refs/pull/<n>/merge` comparison.
 EmitNoneIf(!Regex.IsMatch(prNumber, "^[0-9]+$"), $"Resolved PR number '{prNumber}' is not numeric or empty; refusing.");
 
+// E2E ONLY (fork branch): the mirrored fork PR that receives the comment is a
+// different PR from the dotnet/roslyn PR the Azure build actually ran on, so
+// the two identities are tracked separately. Upstream they are always equal.
+var adoPrNumber = Env("ADO_PR_NUMBER");
+if (adoPrNumber.Length == 0)
+{
+    adoPrNumber = prNumber;
+}
+
+EmitNoneIf(!Regex.IsMatch(adoPrNumber, "^[0-9]+$"), $"Resolved ADO source PR number '{adoPrNumber}' is not numeric or empty; refusing.");
+
 // --- 2. Scope check: only PRs that roslyn-CI targets ------------------------
 var prJson = await GitHubGet($"repos/{repo}/pulls/{prNumber}");
 var baseRef = prJson.At("base", "ref").Text();
 // An empty base ref means the API call failed, not that the PR is out of scope.
 EmitNoneIf(baseRef.Length == 0, $"Could not resolve the base ref for PR #{prNumber}; treating as a data-resolution failure.");
 EmitNoneIf(
-    baseRef is not ("main" or "main-vs-deps" or "community")
+    baseRef is not ("main" or "main-vs-deps" or "community"
+            // `e2e-build-failure-base` is E2E ONLY and does not exist upstream.
+            or "e2e-build-failure-base")
         && !baseRef.StartsWith("release/", StringComparison.Ordinal)
         && !baseRef.StartsWith("features/", StringComparison.Ordinal)
         && !baseRef.StartsWith("demos/", StringComparison.Ordinal),
@@ -148,18 +161,28 @@ Console.WriteLine($"ADO build {buildId}: result='{result}' definition='{definiti
 EmitNoneIf(definitionId != adoDefinitionId,
     $"ADO build {buildId} is definition '{definitionId}', not roslyn-CI ({adoDefinitionId}); refusing.");
 EmitNoneIf(result != "failed", $"ADO build {buildId} did not fail (result='{result}'); nothing to analyze.");
-EmitNoneIf(sourceBranch != $"refs/pull/{prNumber}/merge",
-    $"ADO build {buildId} sourceBranch '{sourceBranch}' does not match PR #{prNumber}; refusing to avoid posting to the wrong PR.");
+EmitNoneIf(sourceBranch != $"refs/pull/{adoPrNumber}/merge",
+    $"ADO build {buildId} sourceBranch '{sourceBranch}' does not match PR #{adoPrNumber}; refusing to avoid posting to the wrong PR.");
 
 // --- 5. Require the build to describe the PR's current revision ------------
 // ADO builds GitHub's `refs/pull/<n>/merge`, so `sourceVersion` is the merge
 // commit as of build time. Comparing it as well as the head catches a base
 // branch that advanced while the PR head stayed put.
 var buildPrSha = buildJson.At("triggerInfo", "pr.sourceSha").Text();
-var buildMergeSha = buildJson.At("sourceVersion").Text();
+var adoBuildMergeSha = buildJson.At("sourceVersion").Text();
 var currentHead = prJson.At("head", "sha").Text();
 var currentMerge = prJson.At("merge_commit_sha").Text();
-EmitNoneIf(buildPrSha.Length == 0 || currentHead.Length == 0 || buildMergeSha.Length == 0 || currentMerge.Length == 0,
+// E2E ONLY: a mirrored fork PR has the same head commit but GitHub computes its
+// own merge commit, so the fork's merge revision is what later staleness checks
+// must track. Upstream adoPrNumber == prNumber and this is a no-op.
+var buildMergeSha = adoBuildMergeSha;
+if (adoPrNumber != prNumber)
+{
+    Console.WriteLine($"E2E mirror: ADO merge '{adoBuildMergeSha}', fork merge '{currentMerge}'.");
+    buildMergeSha = currentMerge;
+}
+
+EmitNoneIf(buildPrSha.Length == 0 || currentHead.Length == 0 || adoBuildMergeSha.Length == 0 || buildMergeSha.Length == 0 || currentMerge.Length == 0,
     "Could not resolve all build/current head and merge revisions; skipping to avoid analyzing a stale binlog.");
 EmitNoneIf(buildPrSha != currentHead,
     $"Build {buildId} analyzed '{buildPrSha}' but PR #{prNumber} head is now '{currentHead}'; skipping stale build.");
