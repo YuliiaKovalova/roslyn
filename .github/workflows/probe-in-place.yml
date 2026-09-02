@@ -1,0 +1,122 @@
+name: probe-in-place
+
+# Can the extractor run *from the work tree* (no copy)?
+# Blocker 1 (root global.json SDK pin) is resolved from the CURRENT DIRECTORY.
+# Blocker 2 (root Directory.Build.props etc.) is resolved from the FILE's
+# directory. So the two can be addressed independently: move cwd out of scope
+# for 1, and suppress/short-circuit the import chain for 2 - while the .cs
+# itself stays in .github/workflows/scripts and is never copied.
+
+on:
+  push:
+    branches: [cs-probe5]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  in-place:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/workflows/scripts
+
+      - name: Fixture
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fix/logs
+          head -c 3000 /dev/zero | tr '\0' 'A' > /tmp/fix/logs/a.binlog
+          head -c 1500 /dev/zero | tr '\0' 'B' > /tmp/fix/logs/b.binlog
+          (cd /tmp/fix && zip -q -r /tmp/artifact.zip logs)
+          python3 -c "import zipfile; z=zipfile.ZipFile('/tmp/evil.zip','w'); z.writestr('../evil.binlog','X'*10); z.close()"
+          echo "SCRIPT_DIR=${GITHUB_WORKSPACE}/.github/workflows/scripts" >> "${GITHUB_ENV}"
+
+      # ---- H1: file in repo, cwd out of scope, -p: suppresses the imports ---
+      - name: 'H1: cwd=RUNNER_TEMP, file in repo, -p: flags (COLD)'
+        run: |
+          cd "${RUNNER_TEMP}"
+          set +e
+          start=$(date +%s%3N)
+          out=$(dotnet run "${SCRIPT_DIR}/extract-binlogs.cs" \
+            -p:ImportDirectoryBuildProps=false \
+            -p:ImportDirectoryBuildTargets=false \
+            -p:ImportDirectoryPackagesProps=false \
+            -- /tmp/artifact.zip /tmp/h1 1 999999 "Correctness Analyzers Attempt 1 Logs" 2>/tmp/h1.err)
+          rc=$?
+          echo "H1_COLD rc=${rc} ms=$(( $(date +%s%3N)-start ))"
+          echo "H1_COLD_STDOUT<<<${out}>>>"
+          echo "H1_COLD_STDERR<<<$(head -c 500 /tmp/h1.err)>>>"
+          ls -1 /tmp/h1 2>/dev/null || true
+
+      - name: 'H1b: same, WARM'
+        run: |
+          cd "${RUNNER_TEMP}"
+          set +e
+          start=$(date +%s%3N)
+          out=$(dotnet run "${SCRIPT_DIR}/extract-binlogs.cs" \
+            -p:ImportDirectoryBuildProps=false \
+            -p:ImportDirectoryBuildTargets=false \
+            -p:ImportDirectoryPackagesProps=false \
+            -- /tmp/artifact.zip /tmp/h1b 1 999999 Leg 2>/dev/null)
+          echo "H1b_WARM rc=$? ms=$(( $(date +%s%3N)-start )) stdout<<<${out}>>>"
+
+      - name: 'H1c: hostile archive still rejected'
+        run: |
+          cd "${RUNNER_TEMP}"
+          set +e
+          out=$(dotnet run "${SCRIPT_DIR}/extract-binlogs.cs" \
+            -p:ImportDirectoryBuildProps=false \
+            -p:ImportDirectoryBuildTargets=false \
+            -p:ImportDirectoryPackagesProps=false \
+            -- /tmp/evil.zip /tmp/h1c 1 999999 Leg 2>/tmp/h1c.err)
+          echo "H1c_EVIL rc=$? stdout<<<${out}>>> stderr<<<$(cat /tmp/h1c.err)>>>"
+
+      # ---- H2: file in repo, cwd out of scope, eng/isolated-style stubs -----
+      - name: 'H2 setup: stub Directory.Build.* in the scripts dir (no global.json)'
+        run: |
+          set -euo pipefail
+          cd "${SCRIPT_DIR}"
+          printf '<Project />\n' > Directory.Build.props
+          printf '<Project />\n' > Directory.Build.targets
+          printf '<Project />\n' > Directory.Packages.props
+          ls -1
+
+      - name: 'H2: cwd=RUNNER_TEMP, file in repo, stubs, CLEAN command line'
+        run: |
+          cd "${RUNNER_TEMP}"
+          set +e
+          start=$(date +%s%3N)
+          out=$(dotnet run "${SCRIPT_DIR}/extract-binlogs.cs" -- /tmp/artifact.zip /tmp/h2 1 999999 Leg 2>/tmp/h2.err)
+          echo "H2 rc=$? ms=$(( $(date +%s%3N)-start )) stdout<<<${out}>>>"
+          echo "H2_STDERR<<<$(head -c 500 /tmp/h2.err)>>>"
+
+      - name: 'H3: with stubs, does it also work with cwd INSIDE the scripts dir?'
+        run: |
+          cd "${SCRIPT_DIR}"
+          set +e
+          out=$(dotnet run ./extract-binlogs.cs -- /tmp/artifact.zip /tmp/h3 1 999999 Leg 2>/tmp/h3.err)
+          echo "H3 rc=$? stdout<<<${out}>>>"
+          echo "H3_STDERR<<<$(head -c 300 /tmp/h3.err)>>>"
+
+      - name: 'H4: does the workspace root still build as roslyn expects?'
+        run: |
+          cd "${GITHUB_WORKSPACE}"
+          set +e
+          out=$(dotnet --version 2>&1)
+          echo "H4_ROOT_VERSION rc=$? out<<<${out}>>>"
+
+      - name: 'H5: remove stubs, confirm H1 shape needs no repo files'
+        run: |
+          cd "${SCRIPT_DIR}"
+          rm -f Directory.Build.props Directory.Build.targets Directory.Packages.props
+          ls -1
+          cd "${RUNNER_TEMP}"
+          set +e
+          out=$(dotnet run "${SCRIPT_DIR}/extract-binlogs.cs" \
+            -p:ImportDirectoryBuildProps=false \
+            -p:ImportDirectoryBuildTargets=false \
+            -p:ImportDirectoryPackagesProps=false \
+            -- /tmp/artifact.zip /tmp/h5 1 999999 Leg 2>/dev/null)
+          echo "H5_NO_REPO_FILES rc=$? stdout<<<${out}>>>"
