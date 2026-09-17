@@ -183,7 +183,7 @@ jobs:
           # roslyn-CI pipeline definition id in dnceng-public/public.
           ADO_BUILD_DEFINITION_ID: "95"
           # Fork-only identity mapping for the exact retained E2E build.
-          ADO_PR_NUMBER: "85261"
+          ADO_PR_NUMBER: "84936"
           RESOLVE_MODE: ${{ github.event_name == 'workflow_dispatch' && 'dispatch' || 'check_run' }}
           # Event-owned, and the same value safe outputs are bound to. Empty for
           # fork PRs, which the script then resolves from CHECK_HEAD_SHA.

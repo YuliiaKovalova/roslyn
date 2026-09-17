@@ -203,7 +203,7 @@ jobs:
           # roslyn-CI pipeline definition id in dnceng-public/public.
           ADO_BUILD_DEFINITION_ID: "95"
           # Fork-only identity mapping; latest lookup still queries the real PR.
-          ADO_PR_NUMBER: "85261"
+          ADO_PR_NUMBER: "84936"
           # No `check_run` payload exists on a slash command, so locate the
           # build by the PR's merge branch instead.
           RESOLVE_MODE: latest

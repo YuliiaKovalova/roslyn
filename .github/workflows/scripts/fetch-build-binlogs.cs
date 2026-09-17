@@ -102,8 +102,8 @@ EmitNoneIf(!Regex.IsMatch(prNumber, "^[0-9]+$"), $"Resolved PR number '{prNumber
 // Fork-only E2E: the output PR mirrors the exact head/base of this retained
 // upstream build. No other repository or output PR may use this test harness.
 var adoPrNumber = Env("ADO_PR_NUMBER");
-EmitNoneIf(repo != "YuliiaKovalova/roslyn" || prNumber != "2" || adoPrNumber != "85261",
-    "This E2E harness only targets YuliiaKovalova/roslyn#2 and upstream PR #85261.");
+EmitNoneIf(repo != "YuliiaKovalova/roslyn" || prNumber != "3" || adoPrNumber != "84936",
+    "This E2E harness only targets YuliiaKovalova/roslyn#3 and upstream PR #84936.");
 
 // --- 2. Scope check: only PRs that roslyn-CI targets ------------------------
 var prJson = await GitHubGet($"repos/{repo}/pulls/{prNumber}");
@@ -111,7 +111,7 @@ var baseRef = prJson.At("base", "ref").Text();
 // An empty base ref means the API call failed, not that the PR is out of scope.
 EmitNoneIf(baseRef.Length == 0, $"Could not resolve the base ref for PR #{prNumber}; treating as a data-resolution failure.");
 EmitNoneIf(
-    baseRef is not ("main" or "main-vs-deps" or "community" or "e2e-build-failure-base-20260917")
+    baseRef is not ("main" or "main-vs-deps" or "community" or "e2e-build-failure-base-compact-20260917")
         && !baseRef.StartsWith("release/", StringComparison.Ordinal)
         && !baseRef.StartsWith("features/", StringComparison.Ordinal)
         && !baseRef.StartsWith("demos/", StringComparison.Ordinal),
@@ -137,8 +137,10 @@ switch (resolveMode)
         // Take the newest build regardless of status. If it is still running -
         // e.g. right after a force-push - skip rather than pair an older failure
         // with the PR's current head.
+        // E2E ONLY: freeze the external build list at the retained fixture's
+        // queue time. The production latest query has no maxTime override.
         var newest = (await AdoGet($"build list for PR #{prNumber}",
-            $"{adoApi}/build/builds?definitions={adoDefinitionId}&branchName=refs/pull/{adoPrNumber}/merge&queryOrder=queueTimeDescending&$top=1&api-version=7.1"))
+            $"{adoApi}/build/builds?definitions={adoDefinitionId}&branchName=refs/pull/{adoPrNumber}/merge&maxTime=2026-09-11T02:28:58Z&queryOrder=queueTimeDescending&$top=1&api-version=7.1"))
             .At("value").Items().FirstOrDefault();
         buildId = newest.At("id").Text();
         var buildStatus = newest.At("status").Text();
@@ -178,8 +180,8 @@ var buildPrSha = buildJson.At("triggerInfo", "pr.sourceSha").Text();
 var adoBuildMergeSha = buildJson.At("sourceVersion").Text();
 var currentHead = prJson.At("head", "sha").Text();
 var currentMerge = prJson.At("merge_commit_sha").Text();
-EmitNoneIf(adoBuildMergeSha != "d906530431a3575d0bf9268ea5ec51e686584406"
-        || prJson.At("base", "sha").Text() != "0c14b7cb5e382318c4322e29e045f48b11c641ca",
+EmitNoneIf(adoBuildMergeSha != "e4c99aaaf5b9e4343b810d062fb0864666f27507"
+        || prJson.At("base", "sha").Text() != "bd6ba8d447dc6ae95558a99d5dca5cc44514976c",
     "The pinned E2E build/base revisions changed; refusing a different fixture.");
 // GitHub computes a distinct merge commit for the mirrored fork PR. Its head
 // must still match ADO, and its merge is rechecked after download and by outputs.
