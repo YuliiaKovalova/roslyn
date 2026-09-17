@@ -69,6 +69,11 @@ imports:
 
 engine: copilot
 
+# Fork-only E2E: gh-aw refuses its implicit PR checkout inside fork repositories.
+# Use the documented opt-out and explicitly check out the validated fixture
+# below, restoring trusted configuration before any agent execution.
+checkout: false
+
 # Live binlog access for the agent — see build-failure-analysis.agent.md for the
 # trust model. The digest is pinned in `.github/aw/actions-lock.json` because
 # this container parses artifacts from untrusted PRs.
@@ -242,6 +247,22 @@ jobs:
 # Steps that run in the agent job. The top-level `if:` gates these on binlogs
 # having been retrieved, so the agent never runs without something to analyze.
 steps:
+  - name: E2E check out the validated fixture head
+    uses: actions/checkout@v7.0.1
+    with:
+      ref: ${{ needs.fetch-binlog.outputs.pr-head-sha }}
+      persist-credentials: false
+
+  - name: E2E restore trusted workflow and agent configuration
+    shell: bash
+    env:
+      TRUSTED_REF: refs/heads/${{ github.event.repository.default_branch }}
+    run: |
+      git fetch --no-tags --depth=1 origin "${TRUSTED_REF}"
+      # The pinned fixture and trusted ref contain .github and AGENTS.md, and
+      # neither contains .agents. No PR-provided configuration is executed.
+      git restore --source=FETCH_HEAD --worktree -- .github AGENTS.md
+
   - name: Download analysis artifact
     uses: actions/download-artifact@v8.0.1
     with:
