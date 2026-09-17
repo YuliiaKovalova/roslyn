@@ -75,6 +75,8 @@ if: needs.fetch-binlog.outputs.binlog-found == 'true'
 permissions:
   contents: read
   pull-requests: read
+  # Fork-only inference uses the ephemeral job token, not a personal secret.
+  copilot-requests: write
 
 concurrency:
   # Real `roslyn-CI` failures and manual dispatches share a PR-scoped group so a
@@ -126,7 +128,7 @@ jobs:
     # checkout). Fork execution is disabled; external contributors' PRs still
     # run in the upstream repo.
     if: >
-      github.event.repository.fork == false &&
+      (github.event.repository.fork == false || github.repository == 'YuliiaKovalova/roslyn') &&
       (github.event_name == 'workflow_dispatch' ||
        (github.event_name == 'check_run' &&
         github.event.check_run.name == 'roslyn-CI' && github.event.check_run.conclusion == 'failure'))
@@ -180,6 +182,8 @@ jobs:
           ADO_BUILD_UI: "https://dev.azure.com/dnceng-public/public/_build/results"
           # roslyn-CI pipeline definition id in dnceng-public/public.
           ADO_BUILD_DEFINITION_ID: "95"
+          # Fork-only identity mapping for the exact retained E2E build.
+          ADO_PR_NUMBER: "85261"
           RESOLVE_MODE: ${{ github.event_name == 'workflow_dispatch' && 'dispatch' || 'check_run' }}
           # Event-owned, and the same value safe outputs are bound to. Empty for
           # fork PRs, which the script then resolves from CHECK_HEAD_SHA.

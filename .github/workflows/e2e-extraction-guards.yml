@@ -1,0 +1,52 @@
+name: E2E extraction guards
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  extraction:
+    if: github.repository == 'YuliiaKovalova/roslyn'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: refs/heads/${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/workflows/scripts
+          persist-credentials: false
+      - name: Verify metadata rejection and legitimate large payloads on Linux
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $script = Join-Path $env:GITHUB_WORKSPACE '.github/workflows/scripts/fetch-build-binlogs.cs'
+          Set-Location $env:RUNNER_TEMP
+          $metadataZip = Join-Path $env:RUNNER_TEMP 'metadata.zip'
+          $archive = [IO.Compression.ZipFile]::Open($metadataZip, [IO.Compression.ZipArchiveMode]::Create)
+          try {
+            for ($i = 0; $i -lt 300; $i++) {
+              $null = $archive.CreateEntry("$($i)_$('a' * 60000).txt")
+            }
+          } finally { $archive.Dispose() }
+          $dest = Join-Path $env:RUNNER_TEMP 'rejected-metadata'
+          $output = & dotnet run --file $script -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -p:ImportDirectoryPackagesProps=false -- --extract $metadataZip $dest 1 4294967296 fixture 2>&1
+          $exit = $LASTEXITCODE
+          $output | ForEach-Object { Write-Host $_ }
+          if ($exit -ne 1 -or ($output -join "`n") -notmatch 'metadata exceeds' -or (Test-Path $dest)) {
+            throw 'Metadata rejection failed or created an output directory.'
+          }
+          Write-Host 'PASS: oversized metadata rejected before writing.'
+          $payloadZip = Join-Path $env:RUNNER_TEMP 'payload.zip'
+          $archive = [IO.Compression.ZipFile]::Open($payloadZip, [IO.Compression.ZipArchiveMode]::Create)
+          try {
+            $stream = $archive.CreateEntry('large.binlog', [IO.Compression.CompressionLevel]::NoCompression).Open()
+            try {
+              $bytes = [byte[]]::new(1024 * 1024)
+              for ($i = 0; $i -lt 20; $i++) { $stream.Write($bytes, 0, $bytes.Length) }
+            } finally { $stream.Dispose() }
+          } finally { $archive.Dispose() }
+          $dest = Join-Path $env:RUNNER_TEMP 'accepted-payload'
+          & dotnet run --file $script -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -p:ImportDirectoryPackagesProps=false -- --extract $payloadZip $dest 1 20971520 fixture
+          if ($LASTEXITCODE -ne 0 -or (Get-Item (Join-Path $dest '1_0_fixture.binlog')).Length -ne 20971520) {
+            throw 'A payload larger than the metadata budget did not extract correctly.'
+          }
+          Write-Host 'PASS: 20 MiB payload extracted at its exact output budget.'

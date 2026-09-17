@@ -99,13 +99,19 @@ if (prNumber.Length == 0 && Regex.IsMatch(checkHeadSha, "^[0-9a-f]{40}$"))
 // Interpolated into API paths and into the `refs/pull/<n>/merge` comparison.
 EmitNoneIf(!Regex.IsMatch(prNumber, "^[0-9]+$"), $"Resolved PR number '{prNumber}' is not numeric or empty; refusing.");
 
+// Fork-only E2E: the output PR mirrors the exact head/base of this retained
+// upstream build. No other repository or output PR may use this test harness.
+var adoPrNumber = Env("ADO_PR_NUMBER");
+EmitNoneIf(repo != "YuliiaKovalova/roslyn" || prNumber != "2" || adoPrNumber != "85261",
+    "This E2E harness only targets YuliiaKovalova/roslyn#2 and upstream PR #85261.");
+
 // --- 2. Scope check: only PRs that roslyn-CI targets ------------------------
 var prJson = await GitHubGet($"repos/{repo}/pulls/{prNumber}");
 var baseRef = prJson.At("base", "ref").Text();
 // An empty base ref means the API call failed, not that the PR is out of scope.
 EmitNoneIf(baseRef.Length == 0, $"Could not resolve the base ref for PR #{prNumber}; treating as a data-resolution failure.");
 EmitNoneIf(
-    baseRef is not ("main" or "main-vs-deps" or "community")
+    baseRef is not ("main" or "main-vs-deps" or "community" or "e2e-build-failure-base-20260917")
         && !baseRef.StartsWith("release/", StringComparison.Ordinal)
         && !baseRef.StartsWith("features/", StringComparison.Ordinal)
         && !baseRef.StartsWith("demos/", StringComparison.Ordinal),
@@ -132,7 +138,7 @@ switch (resolveMode)
         // e.g. right after a force-push - skip rather than pair an older failure
         // with the PR's current head.
         var newest = (await AdoGet($"build list for PR #{prNumber}",
-            $"{adoApi}/build/builds?definitions={adoDefinitionId}&branchName=refs/pull/{prNumber}/merge&queryOrder=queueTimeDescending&$top=1&api-version=7.1"))
+            $"{adoApi}/build/builds?definitions={adoDefinitionId}&branchName=refs/pull/{adoPrNumber}/merge&queryOrder=queueTimeDescending&$top=1&api-version=7.1"))
             .At("value").Items().FirstOrDefault();
         buildId = newest.At("id").Text();
         var buildStatus = newest.At("status").Text();
@@ -161,7 +167,7 @@ Console.WriteLine($"ADO build {buildId}: result='{result}' definition='{definiti
 EmitNoneIf(definitionId != adoDefinitionId,
     $"ADO build {buildId} is definition '{definitionId}', not roslyn-CI ({adoDefinitionId}); refusing.");
 EmitNoneIf(result != "failed", $"ADO build {buildId} did not fail (result='{result}'); nothing to analyze.");
-EmitNoneIf(sourceBranch != $"refs/pull/{prNumber}/merge",
+EmitNoneIf(sourceBranch != $"refs/pull/{adoPrNumber}/merge",
     $"ADO build {buildId} sourceBranch '{sourceBranch}' does not match PR #{prNumber}; refusing to avoid posting to the wrong PR.");
 
 // --- 5. Require the build to describe the PR's current revision ------------
@@ -169,9 +175,15 @@ EmitNoneIf(sourceBranch != $"refs/pull/{prNumber}/merge",
 // commit as of build time. Comparing it as well as the head catches a base
 // branch that advanced while the PR head stayed put.
 var buildPrSha = buildJson.At("triggerInfo", "pr.sourceSha").Text();
-var buildMergeSha = buildJson.At("sourceVersion").Text();
+var adoBuildMergeSha = buildJson.At("sourceVersion").Text();
 var currentHead = prJson.At("head", "sha").Text();
 var currentMerge = prJson.At("merge_commit_sha").Text();
+EmitNoneIf(adoBuildMergeSha != "d906530431a3575d0bf9268ea5ec51e686584406"
+        || prJson.At("base", "sha").Text() != "0c14b7cb5e382318c4322e29e045f48b11c641ca",
+    "The pinned E2E build/base revisions changed; refusing a different fixture.");
+// GitHub computes a distinct merge commit for the mirrored fork PR. Its head
+// must still match ADO, and its merge is rechecked after download and by outputs.
+var buildMergeSha = currentMerge;
 EmitNoneIf(buildPrSha.Length == 0 || currentHead.Length == 0 || buildMergeSha.Length == 0 || currentMerge.Length == 0,
     "Could not resolve all build/current head and merge revisions; skipping to avoid analyzing a stale binlog.");
 EmitNoneIf(buildPrSha != currentHead,

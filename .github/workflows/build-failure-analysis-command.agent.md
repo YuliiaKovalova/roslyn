@@ -38,6 +38,8 @@ if: needs.fetch-binlog.outputs.binlog-found == 'true'
 permissions:
   contents: read
   pull-requests: read
+  # Fork-only inference uses the ephemeral job token, not a personal secret.
+  copilot-requests: write
 
 concurrency:
   # Distinct from the automatic workflow's group (`build-failure-analysis-<pr>`).
@@ -99,7 +101,7 @@ jobs:
     # `github.event.issue.pull_request` keeps plain issue comments out.
     if: >-
       github.event_name == 'issue_comment' &&
-      github.event.repository.fork == false &&
+      (github.event.repository.fork == false || github.repository == 'YuliiaKovalova/roslyn') &&
       github.event.issue.pull_request &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
       contains(github.event.comment.body, '/analyze-build-failure')
@@ -200,6 +202,8 @@ jobs:
           ADO_BUILD_UI: "https://dev.azure.com/dnceng-public/public/_build/results"
           # roslyn-CI pipeline definition id in dnceng-public/public.
           ADO_BUILD_DEFINITION_ID: "95"
+          # Fork-only identity mapping; latest lookup still queries the real PR.
+          ADO_PR_NUMBER: "85261"
           # No `check_run` payload exists on a slash command, so locate the
           # build by the PR's merge branch instead.
           RESOLVE_MODE: latest
